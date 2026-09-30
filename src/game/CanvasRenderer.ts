@@ -87,6 +87,9 @@ export class CanvasRenderer {
   private doorOpenProgress: number = 0;
   private doorSparkles: Array<{ x: number; y: number; vx: number; vy: number; alpha: number; size: number; color: string }> = [];
 
+  // Mobile Touch Ripple visual effects
+  private touchRipples: Array<{ x: number; y: number; radius: number; maxRadius: number; alpha: number }> = [];
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     const context = canvas.getContext('2d');
@@ -142,6 +145,17 @@ export class CanvasRenderer {
         life: 0,
       });
     }
+  }
+
+  public spawnTouchRipple(x: number, y: number) {
+    this.touchRipples.push({
+      x,
+      y,
+      radius: 4,
+      maxRadius: 40,
+      alpha: 0.95,
+    });
+    this.spawnClickBurst(x, y);
   }
 
   public getSpatialTransform() {
@@ -2960,6 +2974,32 @@ export class CanvasRenderer {
       ctx.beginPath();
       ctx.arc(cp.x, cp.y, cp.size, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    // Touch Ripples on Canvas
+    for (let i = this.touchRipples.length - 1; i >= 0; i--) {
+      const rip = this.touchRipples[i];
+      rip.radius += dt * 68;
+      rip.alpha -= dt * 2.0;
+
+      if (rip.alpha <= 0 || rip.radius >= rip.maxRadius) {
+        this.touchRipples.splice(i, 1);
+        continue;
+      }
+
+      ctx.save();
+      ctx.strokeStyle = `rgba(212, 175, 55, ${rip.alpha * 0.9})`;
+      ctx.lineWidth = 2.5 * rip.alpha;
+      ctx.beginPath();
+      ctx.arc(rip.x, rip.y, rip.radius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.strokeStyle = `rgba(250, 235, 185, ${rip.alpha * 0.6})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(rip.x, rip.y, Math.max(1, rip.radius * 0.55), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
     }
 
     ctx.restore();

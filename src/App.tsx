@@ -46,6 +46,7 @@ import { StarrySkylightModal } from './components/StarrySkylightModal';
 import { SolutionsModal } from './components/SolutionsModal';
 import { RotateOrientationPrompt } from './components/RotateOrientationPrompt';
 import { OpeningSequence } from './components/OpeningSequence';
+import { TouchControls } from './components/TouchControls';
 
 export const ALL_FIVE_JEWELS: InventoryItem[] = [
   {
@@ -181,6 +182,9 @@ export default function App() {
 
   const mouseTarget = useRef<{ x: number; y: number } | null>(null);
   const keysDown = useRef<Record<string, boolean>>({});
+  const touchMoveVector = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [nearbyObject, setNearbyObject] = useState<InteractiveObject | null>(null);
+  const nearbyObjectIdRef = useRef<string | null>(null);
 
   // Initialize Canvas & Renderer
   useEffect(() => {
@@ -257,6 +261,13 @@ export default function App() {
       if (keysDown.current['KeyW'] || keysDown.current['ArrowUp']) moveY -= 1;
       if (keysDown.current['KeyS'] || keysDown.current['ArrowDown']) moveY += 1;
 
+      // Analog Touch Joystick input
+      if (touchMoveVector.current.x !== 0 || touchMoveVector.current.y !== 0) {
+        moveX += touchMoveVector.current.x;
+        moveY += touchMoveVector.current.y;
+        mouseTarget.current = null;
+      }
+
       if (mouseTarget.current) {
         const dx = mouseTarget.current.x - p.x;
         const dy = mouseTarget.current.y - p.y;
@@ -304,6 +315,24 @@ export default function App() {
       // Strictly bounded within room floorboards
       p.x = Math.max(80, Math.min(ROOM_WIDTH - 80, p.x));
       p.y = Math.max(500, Math.min(ROOM_HEIGHT - 65, p.y));
+
+      // Dynamically detect closest object within interaction distance for Mobile Touch HUD
+      let closest: InteractiveObject | null = null;
+      let minD = 135;
+      for (const obj of currentRoomRef.current.objects) {
+        const cx = obj.x;
+        const cy = obj.y - obj.height / 2;
+        const dist = Math.hypot(p.x - cx, p.y - cy);
+        if (dist < minD) {
+          minD = dist;
+          closest = obj;
+        }
+      }
+      const newNearId = closest ? closest.id : null;
+      if (newNearId !== nearbyObjectIdRef.current) {
+        nearbyObjectIdRef.current = newNearId;
+        setNearbyObject(closest);
+      }
 
       // Render Canvas Scene
       if (rendererRef.current && sceneRef.current.startsWith('ROOM_')) {
@@ -404,28 +433,57 @@ export default function App() {
     }
   };
 
-  // Canvas Touch handler for Mobile Phones & Tablets
-  const handleCanvasTouch = (e: React.TouchEvent<HTMLCanvasElement>) => {
+  // Enhanced Canvas Touch handlers for Mobile Phones & Tablets
+  const handleCanvasTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
     if (!rendererRef.current || e.touches.length === 0) return;
+    audioSystem.init();
+    audioSystem.resume();
     const touch = e.touches[0];
     lastInteractionTime.current = Date.now();
 
     const { x: touchX, y: touchY } = rendererRef.current.screenToWorld(touch.clientX, touch.clientY);
-    rendererRef.current.spawnClickBurst(touchX, touchY);
+    rendererRef.current.spawnTouchRipple(touchX, touchY);
 
-    const clickedObject = currentRoom.objects.find(obj => {
-      const left = obj.x - obj.width / 2;
-      const right = obj.x + obj.width / 2;
-      const top = obj.y - obj.height;
-      const bottom = obj.y;
-      return touchX >= left && touchX <= right && touchY >= top && touchY <= bottom;
-    });
+    // Generous touch target padding (34px buffer for fingers on mobile screens)
+    const TOUCH_PADDING = 34;
+    let closestObj: InteractiveObject | null = null;
+    let closestDist = Infinity;
 
-    if (clickedObject) {
-      handleInteractObject(clickedObject);
+    for (const obj of currentRoom.objects) {
+      const left = obj.x - obj.width / 2 - TOUCH_PADDING;
+      const right = obj.x + obj.width / 2 + TOUCH_PADDING;
+      const top = obj.y - obj.height - TOUCH_PADDING;
+      const bottom = obj.y + TOUCH_PADDING;
+
+      if (touchX >= left && touchX <= right && touchY >= top && touchY <= bottom) {
+        const cx = obj.x;
+        const cy = obj.y - obj.height / 2;
+        const dist = Math.hypot(touchX - cx, touchY - cy);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closestObj = obj;
+        }
+      }
+    }
+
+    if (closestObj) {
+      mouseTarget.current = null;
+      handleInteractObject(closestObj);
     } else {
       mouseTarget.current = { x: touchX, y: touchY };
     }
+  };
+
+  const handleCanvasTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (!rendererRef.current || e.touches.length === 0) return;
+    const touch = e.touches[0];
+    const { x: touchX, y: touchY } = rendererRef.current.screenToWorld(touch.clientX, touch.clientY);
+    // Continuous drag to walk across room floor
+    mouseTarget.current = { x: touchX, y: touchY };
+  };
+
+  const handleCanvasTouchEnd = () => {
+    // Touch interaction completed
   };
 
   // Interact with Object & Execute Room Puzzles
@@ -793,8 +851,10 @@ export default function App() {
         ref={canvasRef}
         onMouseMove={handleCanvasMouseMove}
         onClick={handleCanvasClick}
-        onTouchStart={handleCanvasTouch}
-        className="absolute inset-0 w-full h-full block z-0 cursor-pointer touch-none"
+        onTouchStart={handleCanvasTouchStart}
+        onTouchMove={handleCanvasTouchMove}
+        onTouchEnd={handleCanvasTouchEnd}
+        className="absolute inset-0 w-full h-full block z-0 cursor-pointer touch-none select-none"
       />
 
       {/* Screen: Title Menu */}
@@ -861,6 +921,45 @@ export default function App() {
             onToggleMute={handleToggleMute}
             hasUnreadNotebook={hasUnreadNotebook}
             currentObjective={currentObjectiveText}
+          />
+
+          {/* On-Screen Mobile Touch Controls (Thumbstick & Contextual Action Buttons) */}
+          <TouchControls
+            active={
+              !showClockPuzzle &&
+              !showCabinetPuzzle &&
+              !showPrismPuzzle &&
+              !showInterferencePuzzle &&
+              !showCelestialAltarPuzzle &&
+              !showStarrySkylightPuzzle &&
+              !showMasterMatrixPuzzle &&
+              !showLoupeModal &&
+              !activePedestalData &&
+              !showNotebook &&
+              !showPause &&
+              !showHowToPlay &&
+              !showSolutions &&
+              !showSettings &&
+              !showCredits &&
+              !activeLesson
+            }
+            onMoveVector={(vx, vy) => {
+              touchMoveVector.current = { x: vx, y: vy };
+            }}
+            onHotspotSense={() => {
+              rendererRef.current?.triggerHotspotPulse();
+              audioSystem.playHarmonicResonance();
+            }}
+            onInteract={() => {
+              if (nearbyObject) {
+                handleInteractObject(nearbyObject);
+              }
+            }}
+            onOpenNotebook={() => {
+              setShowNotebook(true);
+              setHasUnreadNotebook(false);
+            }}
+            nearbyObject={nearbyObject}
           />
         </>
       )}
