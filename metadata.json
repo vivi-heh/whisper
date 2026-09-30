@@ -1,0 +1,9 @@
+{
+  "name": "The Forgotten Signal",
+  "description": "A Rusty Lake-inspired point-and-click fantasy puzzle adventure game teaching Code Division Multiple Access (CDMA) through environmental mysteries, ancient tower rooms, and magical seals.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
+
+
